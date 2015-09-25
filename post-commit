@@ -1,6 +1,8 @@
 #!/bin/bash
 
 # modified from http://brunohq.com/journal/speed-project-git-hook-for-asana/
+# modified from https://github.com/Spaceman-Labs/asana-post-commit
+# available on https://github.com/trentapple/asana-post-commit
 
 # -----------------------
 # necessary configuration:
@@ -20,6 +22,8 @@ if [ "$display_branch_name" == "" ]; then
 	display_branch_name=false;
 fi
 
+#echo $apikey
+
 # hold the closed ticket numbers
 declare -a closed
 # hold the ticket numbers that are not closed, just touched
@@ -37,6 +41,7 @@ and_pattern='([Aa]nd|&)'
 # get the checkin comment for parsing
 comment=$(git log --pretty=format:"%s %b" -n1)
 repo=${PWD##*/}
+echo $repo
 
 # get branch name and display in the comment
 branch_message=""
@@ -56,18 +61,28 @@ found_task_id=false
 for element in "${words[@]}"
 do
     # if we have a task id, save it to the appropriate array
-    if [[ $element =~ $taskid_pattern ]]; then
+    #if [[ $element =~ $taskid_pattern ]]; then
+	if echo $element | grep -E $taskid_pattern > /dev/null
+	then
+		#echo $element
+		fix_task_id=$(echo $element | grep -E $taskid_pattern | sed 's/^.*#\([0-9]*\).*$/\1/')
         if [ "${closes}" == "YES" ]; then
-            closed=("${closed[@]}" "${BASH_REMATCH[1]}")
+            #closed=("${closed[@]}" "${BASH_REMATCH[1]}")
+			closed=("${closed[@]}" "${fix_task_id}")
         fi
-        referenced=("${referenced[@]}" "${BASH_REMATCH[1]}")
+        #referenced=("${referenced[@]}" "${BASH_REMATCH[1]}")
+		referenced=("${referenced[@]}" "${fix_task_id}")
         found_task_id=true
     # or else if we have a "closes" word, set the tracking bool accordingly
-    elif [[ $element =~ $closes_pattern ]]; then
+    #elif [[ $element =~ $closes_pattern ]]; then
+	elif echo $element | grep -E $closes_pattern > /dev/null
+	then
         closes='YES'
     # and if we don't, set us back to referencing
     # (if we're an "and", don't change any state)
-    elif [[ ! $element =~ $and_pattern ]]; then
+    #elif [[ ! $element =~ $and_pattern ]]; then
+	elif ! echo $element | grep -E $and_pattern > /dev/null
+	then
         closes='NO'
     fi
 done
@@ -75,24 +90,27 @@ done
 # if task id not found in comment, then look for it in the branch name
 if [ "$found_task_id" = false ]; then
     # get task id from branch name. Then send a comment request if task_id exists.
-	task_id=$(git branch | grep '*' | sed 's/^..//' | grep -o '#.*' | sed 's/^.//')
+	task_id=$(git branch | grep '*' | sed 's/^..//' | sed 's/^.*#\([0-9]*\).*$/\1/')
 	if [ "$task_id" ]; then
-    	curl -u ${apikey}: https://app.asana.com/api/1.0/tasks/${task_id}/stories \
-       		-d "text=${print_comment}" > /dev/null 2>&1
+		if [ "$task_id" != "master" ]; then
+			curl -u ${apikey}: https://app.asana.com/api/1.0/tasks/${task_id}/stories \
+				-d "text=${print_comment}" > /dev/null 2>&1
+		fi
 	fi
 fi
 
 # touch the stories we've referenced
 for element in "${referenced[@]}"
 do
+	echo $print_comment
+	echo ${element}
     curl -u ${apikey}: https://app.asana.com/api/1.0/tasks/${element}/stories \
-         -d "text=${print_comment}" > /dev/null 2>&1
+         -d "text=${print_comment}" & > /dev/null 2>&1
 done
 
 # close the tasks we've fixed
 for element in "${closed[@]}"
 do
     curl --request PUT -u ${apikey}: https://app.asana.com/api/1.0/tasks/${element} \
-         -d "completed=true" > /dev/null 2>&1
+         -d "completed=true" & > /dev/null 2>&1
 done
-
